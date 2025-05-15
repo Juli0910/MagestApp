@@ -8,7 +8,7 @@ import pytz
 # Configuración de la pestaña
 # --------------------------------------------------
 st.set_page_config(page_title="Magest App", page_icon="🩺")
-st.title("🚑 Magest App")
+st.title("🤰 Magest App")
 st.markdown("---")
 
 # --------------------------------------------------
