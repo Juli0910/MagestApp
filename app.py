@@ -1,19 +1,24 @@
-import streamlit as st
-import pandas as pd
-import io, xlsxwriter
-from datetime import datetime
-import pytz
+# -----------------------------------------------------------------------
+# 0. IMPORTACIONES
+# -----------------------------------------------------------------------
+import streamlit as st              # Interfaz web
+import pandas as pd                 # Manipulación de datos
+import io, xlsxwriter               # Archivos binarios / Excel
+from datetime import datetime       # Fechas
+import pytz                         # Zona horaria Lima
 
-# --------------------------------------------------
-# Configuración de la pestaña
-# --------------------------------------------------
+# -----------------------------------------------------------------------
+# 1. CONFIGURACIÓN GENERAL
+# -----------------------------------------------------------------------
 st.set_page_config(page_title="Magest App", page_icon="🤰")
 st.title("🤰 Magest App")
 st.markdown("---")
 
-# --------------------------------------------------
-# Diccionario de CENTRO (código → nombre completo)
-# --------------------------------------------------
+# -----------------------------------------------------------------------
+# 2. DICCIONARIOS Y LISTAS DE REFERENCIA
+# -----------------------------------------------------------------------
+
+# --- Mapeo de código → nombre del centro ---
 CENTRO_MAP = {
     "478": "CAP III ALFREDO PIAZZA ROBERTS",
     "446": "CAP III EL AGUSTINO",
@@ -34,47 +39,29 @@ CENTRO_MAP = {
     "002": "RED PRESTACIONAL ALMENARA",
 }
 
-# --------------------------------------------------
-# Columnas de origen
-# --------------------------------------------------
+# --- Columnas esperadas ---
 columnas_explota = [
-    "CENTRO", "PERIODO", "SERVICIO", "ACTIVIDAD", "SUBACTIVIDAD",
-    "PROFESIONAL", "FECHA_ATENCION", "DOC_PACIENTE", "PACIENTE", "ANNOS",
-    "FECHA_SOLIC", "FECHA_CITA", "DES_DIAGNOSTICO", "TIPODIAG", "TIPO_GRAVIDEZ"
+    "CENTRO", "PERIODO", "SERVICIO", "ACTIVIDAD", "SUBACTIVIDAD", "DOC_PROFESIONAL",
+    "PROFESIONAL", "FECHA_ATENCION", "DOC_PACIENTE", "PACIENTE", "EDAD", "TEL_MOVIL",
+    "FECHA_SOLIC", "FECHA_CITA", "DES_DIAGNOSTICO", "TIPODIAG", "TIPO_GRAVIDEZ",
+    "CASODIAG", "N_R_C_SER", "RESULT_ATENCION"
 ]
 
 columnas_citas = [
-    "CENTRO", "PERIODO", "SERVICIO", "CODACTIVIDAD", "ACTIVIDAD", "SUBACTIVIDAD",
-    "FECHA_SOLIC", "FECHA_CITA", "ESTADO_CITA", "TIPO_CITA", "H_C", "DNI_MEDICO",
-    "PROFESIONAL", "DOC_PACIENTE", "PACIENTE", "EDAD", "TEL_MOVIL", "TURNO",
-    "TIP_PROGRAMACION"
+    "CENTRO", "PERIODO", "SERVICIO", "ACTIVIDAD", "SUBACTIVIDAD",
+    "FECHA_SOLIC", "FECHA_CITA", "HORA_CITA", "CONDICION_CITA", "ESTADO_CITA",
+    "TIPO_CITA", "H_C", "DOC_PROFESIONAL", "PROFESIONAL", "TIPO_PACIENTE",
+    "DOC_PACIENTE", "PACIENTE", "FECNACIMPACIENTE", "EDAD", "SEXO",
+    "TEL_MOVIL", "CAS_ADSCRIPCION", "N_R_C_SER", "N_R_C_EST", "TURNO",
+    "DESCONSULTORIO", "OBSERVACION"
 ]
 
-# --------------------------------------------------
-# Columnas a mostrar en cada sección
-# --------------------------------------------------
-cols_show_explota = [
-    "CENTRO", "PERIODO", "DOC_PACIENTE", "PACIENTE", "SERVICIO",
-    "ACTIVIDAD", "SUBACTIVIDAD", "PROFESIONAL", "FECHA_ATENCION", "ANNOS",
-    "FECHA_SOLIC", "FECHA_CITA", "DES_DIAGNOSTICO", "TIPODIAG", "TIPO_GRAVIDEZ"
-]
+cols_show_explota = columnas_explota.copy()
+cols_show_citas   = columnas_citas.copy()
 
-cols_show_citas = [
-    "CENTRO", "PERIODO", "DOC_PACIENTE", "PACIENTE", "SERVICIO",
-    "CODACTIVIDAD", "ACTIVIDAD", "SUBACTIVIDAD", "FECHA_SOLIC", "FECHA_CITA",
-    "ESTADO_CITA", "TIPO_CITA", "H_C", "DNI_MEDICO", "PROFESIONAL",
-    "EDAD", "TEL_MOVIL", "TURNO", "TIP_PROGRAMACION"
-]
-
-# --------------------------------------------------
-# Cabeceras finales
-# --------------------------------------------------
-cabeceras_finales = [
-    "CENTRO", "PERIODO", "DOC_PACIENTE", "PACIENTE", "SERVICIO",
-    "CODACTIVIDAD", "ACTIVIDAD", "SUBACTIVIDAD", "FECHA_SOLIC", "MES",
-    "FECHA_CITA", "ESTADO_CITA", "TIPO_CITA", "H_C", "DNI_MEDICO",
-    "PROFESIONAL", "EDAD", "TEL_MOVIL", "TURNO", "TIP_PROGRAMACION"
-]
+# .....................................................................
+# Mapeo alternativo por palabras (completo, sin omisiones)
+# .....................................................................
 CENTRO_MAP_RESULT_FINAL = {
     "Alfredo": "CAP III ALFREDO PIAZZA ROBERTS",
     "Piazza": "CAP III ALFREDO PIAZZA ROBERTS",
@@ -88,7 +75,6 @@ CENTRO_MAP_RESULT_FINAL = {
     "Aurelio": "HOSPITAL I AURELIO DIAZ UFANO Y PERAL",
     "Diaz": "HOSPITAL I AURELIO DIAZ UFANO Y PERAL",
     "Ufano": "HOSPITAL I AURELIO DIAZ UFANO Y PERAL",
-    "Y": "HOSPITAL I AURELIO DIAZ UFANO Y PERAL",
     "Peral": "HOSPITAL I AURELIO DIAZ UFANO Y PERAL",
     "Jorge": "HOSPITAL I JORGE VOTO BERNALLES CORPANCHO",
     "Voto": "HOSPITAL I JORGE VOTO BERNALLES CORPANCHO",
@@ -119,225 +105,365 @@ CENTRO_MAP_RESULT_FINAL = {
     "Almenara": "RED PRESTACIONAL ALMENARA"
 }
 
-# --------------------------------------------------
-# Mapeos y utilidades
-# --------------------------------------------------
+# --- Mapeo de nombres equivalentes de columnas ---
 nombres_equivalentes = {
     "APENOMB_MEDICO": "PROFESIONAL",
+    "TELEF_MOVIL": "TEL_MOVIL",
+    "DOC_MEDICO": "DOC_PROFESIONAL",
+    "DNI_MEDICO": "DOC_PROFESIONAL",
     "DESC_DIAGNOSTICO": "DES_DIAGNOSTICO",
     "TIPO_DIAG": "TIPODIAG",
-    "DNI": "DOC_PACIENTE"
+    "CASO_DIAG": "CASODIAG",
+    "DNI": "DOC_PACIENTE",
+    "ANNOS": "EDAD"
 }
 
+# --- Nombres de meses en español ---
 meses_es = {
     1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
     7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
 }
 
+# -----------------------------------------------------------------------
+# 3. FUNCIONES DE UTILIDAD
+# -----------------------------------------------------------------------
 def mes_es(fecha_str: str) -> str:
+    """Convierte una cadena de fecha al nombre del mes en español."""
     fecha = pd.to_datetime(fecha_str, dayfirst=True, errors="coerce")
     if pd.isna(fecha):
         fecha = pd.to_datetime(fecha_str, errors="coerce")
     return meses_es.get(fecha.month, "") if not pd.isna(fecha) else ""
 
 def non_empty_count(row: pd.Series) -> int:
+    """Cuenta celdas no vacías en la fila."""
     return row.replace("", pd.NA).notna().sum()
 
 def nombre_archivo(seccion: str, extension: str) -> str:
+    """Genera nombre de archivo con timestamp (horario Lima)."""
     lima = pytz.timezone("America/Lima")
     ahora = datetime.now(lima)
     return f"{seccion}_{ahora.strftime('%Y%m%d_%H%M')}.{extension}"
 
-def aplicar_centro_map_contains(texto):
+def aplicar_centro_map_contains(texto: str) -> str:
+    """Devuelve el nombre completo del centro si el texto contiene palabras clave."""
     for palabra, nombre_completo in CENTRO_MAP_RESULT_FINAL.items():
         if pd.notna(texto) and palabra.upper() in texto.upper():
             return nombre_completo
     return texto
-# --------------------------------------------------
-# Estado UI
-# --------------------------------------------------
-st.session_state.setdefault("show_explota", False)
-st.session_state.setdefault("show_citas",   False)
-st.session_state.setdefault("generate_pressed", False)
 
-# ==================================================
-# 1. EXPLOTA MATCH (solo GESTANTE)
-# ==================================================
+def estandarizar_dataframe(df: pd.DataFrame, columnas_objetivo: list[str]) -> pd.DataFrame:
+    """Reordena y completa columnas faltantes con ''. """
+    df = df.reindex(columns=columnas_objetivo, fill_value="")
+    return df[columnas_objetivo]
+
+# -----------------------------------------------------------------------
+# 4. ESTADO UI
+# -----------------------------------------------------------------------
+for key, default in {
+    "show_explota": False,
+    "show_citas": False
+}.items():
+    st.session_state.setdefault(key, default)
+
+# =======================================================================
+# 5. SECCIÓN 1 – EXPLOTA MATCH
+# =======================================================================
 st.header("📂 Explota Match")
-
 explota_files = st.file_uploader(
     "Sube uno o más archivos .txt para Explota Match",
     type=["txt"], accept_multiple_files=True, key="explota"
 )
 
 df_total_explota = pd.DataFrame()
-errores_explota = []
-
 if explota_files:
-    dfs_validos = []
+    dfs_explota = []
     for f in explota_files:
         try:
-            df = pd.read_csv(f, sep="|", dtype=str)
+            df = pd.read_csv(f, sep="|", dtype=str, keep_default_na=False, encoding="utf-8")
             df.columns = df.columns.str.strip()
             df.rename(columns=nombres_equivalentes, inplace=True)
-
             if "TIPODIAG" in df.columns:
                 df["TIPODIAG"] = df["TIPODIAG"].replace({"P": "PRESUNTIVO", "D": "DEFINITIVO"})
-
-            faltan = [c for c in columnas_explota if c not in df.columns]
-            if faltan:
-                errores_explota.append(f"{f.name}: faltan {', '.join(faltan)}")
-            else:
-                # Mapear CENTRO
-                if "CENTRO" in df.columns:
-                    df["CENTRO"] = df["CENTRO"].map(CENTRO_MAP).fillna(df["CENTRO"])
-                dfs_validos.append(df)
+            df["CENTRO"] = df["CENTRO"].map(CENTRO_MAP).fillna(df["CENTRO"])
+            dfs_explota.append(estandarizar_dataframe(df, columnas_explota))
         except Exception as e:
-            errores_explota.append(f"Error en {f.name}: {e}")
+            st.error(f"Error en {f.name}: {e}")
 
-    if errores_explota:
-        st.warning("Problemas:")
-        for err in errores_explota:
-            st.markdown(f"- {err}")
-
-    if dfs_validos:
+    if dfs_explota:
+        df_total_explota = pd.concat(dfs_explota, ignore_index=True)
         st.success("Explota cargado ✅")
-        df_total_explota = pd.concat(dfs_validos, ignore_index=True)
-        df_total_explota = df_total_explota[
-            df_total_explota["TIPO_GRAVIDEZ"].fillna("").str.upper() == "GESTANTE"
-        ].reset_index(drop=True)              # ← índice consecutivo
 
-        if st.button("👁️ Ver/Ocultar Explota", key="tgl_explota"):
-            st.session_state.show_explota = not st.session_state.show_explota
+        col_view, col_txt, col_xlsx = st.columns(3)
+        with col_view:
+            if st.button("👁️ Ver/Ocultar Explota", key="tgl_explota"):
+                st.session_state.show_explota = not st.session_state.show_explota
+        with col_txt:
+            if st.button("📥 Descargar Explota TXT", key="exp_txt_btn"):
+                with st.spinner("Generando TXT..."):
+                    txt_exp_bytes = df_total_explota.to_csv(
+                        sep="|", index=False, lineterminator="\n"
+                    ).encode("utf-8")
+                st.download_button(
+                    "⬇️ Haz click para bajar TXT",
+                    txt_exp_bytes,
+                    file_name=nombre_archivo("explota", "txt"),
+                    mime="text/plain",
+                    key="exp_txt_dl"
+                )
+        with col_xlsx:
+            if st.button("📥 Descargar Explota Excel", key="exp_xlsx_btn"):
+                with st.spinner("Generando Excel..."):
+                    buf = io.BytesIO()
+                    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                        df_total_explota.to_excel(writer, index=False, sheet_name="Explota")
+                    data_xlsx = buf.getvalue()
+                st.download_button(
+                    "⬇️ Haz click para bajar Excel",
+                    data_xlsx,
+                    file_name=nombre_archivo("explota", "xlsx"),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="exp_xlsx_dl"
+                )
+
         if st.session_state.show_explota:
             st.write(f"Total filas: {len(df_total_explota)}")
             st.dataframe(df_total_explota[cols_show_explota])
 
-# ==================================================
-# 2. CITAS MÉDICAS
-# ==================================================
+# =======================================================================
+# 6. SECCIÓN 2 – CITAS MÉDICAS
+# =======================================================================
 st.markdown("---")
 st.header("📋 Citas Médicas")
-
-citas_file = st.file_uploader(
-    "Sube un archivo .txt para Citas Médicas",
-    type=["txt"], accept_multiple_files=False, key="citas"
+citas_files = st.file_uploader(
+    "Sube uno o más archivos .txt para Citas Médicas",
+    type=["txt"], accept_multiple_files=True, key="citas"
 )
 
 df_citas = pd.DataFrame()
-if citas_file:
-    try:
-        df_citas = pd.read_csv(citas_file, sep="|", dtype=str)
-        df_citas.columns = df_citas.columns.str.strip()
-        df_citas.rename(columns=nombres_equivalentes, inplace=True)
+if citas_files:
+    dfs_citas = []
+    for f in citas_files:
+        try:
+            df = pd.read_csv(f, sep="|", dtype=str, keep_default_na=False, encoding="utf-8")
+            df.columns = df.columns.str.strip()
+            df.rename(columns=nombres_equivalentes, inplace=True)
+            if "TIPODIAG" in df.columns:
+                df["TIPODIAG"] = df["TIPODIAG"].replace({"P": "PRESUNTIVO", "D": "DEFINITIVO"})
+            df["CENTRO"] = df["CENTRO"].map(CENTRO_MAP).fillna(df["CENTRO"])
+            dfs_citas.append(estandarizar_dataframe(df, columnas_citas))
+        except Exception as e:
+            st.error(f"Error en {f.name}: {e}")
 
-        faltan = [c for c in columnas_citas if c not in df_citas.columns]
-        if faltan:
-            st.warning(f"{citas_file.name}: faltan {', '.join(faltan)}")
-        else:
-            st.success("Citas cargado ✅")
+    if dfs_citas:
+        df_citas = pd.concat(dfs_citas, ignore_index=True)
+        st.success("Citas cargado ✅")
+
+        col_view, col_txt, col_xlsx = st.columns(3)
+        with col_view:
             if st.button("👁️ Ver/Ocultar Citas", key="tgl_citas"):
                 st.session_state.show_citas = not st.session_state.show_citas
-            if st.session_state.show_citas:
-                st.write(f"Total filas: {len(df_citas)}")
-                st.dataframe(df_citas[cols_show_citas].reset_index(drop=True))
-    except Exception as e:
-        st.error(f"Error en {citas_file.name}: {e}")
+        with col_txt:
+            if st.button("📥 Descargar Citas TXT", key="cit_txt_btn"):
+                with st.spinner("Generando TXT..."):
+                    txt_cit_bytes = df_citas.to_csv(
+                        sep="|", index=False, lineterminator="\n"
+                    ).encode("utf-8")
+                st.download_button(
+                    "⬇️ Haz click para bajar TXT",
+                    txt_cit_bytes,
+                    file_name=nombre_archivo("citas", "txt"),
+                    mime="text/plain",
+                    key="cit_txt_dl"
+                )
+        with col_xlsx:
+            if st.button("📥 Descargar Citas Excel", key="cit_xlsx_btn"):
+                with st.spinner("Generando Excel..."):
+                    buf = io.BytesIO()
+                    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                        df_citas.to_excel(writer, index=False, sheet_name="Citas")
+                    data_xlsx = buf.getvalue()
+                st.download_button(
+                    "⬇️ Haz click para bajar Excel",
+                    data_xlsx,
+                    file_name=nombre_archivo("citas", "xlsx"),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="cit_xlsx_dl"
+                )
 
-# ==================================================
-# 3. RESULTADO FINAL
-# ==================================================
+        if st.session_state.show_citas:
+            st.write(f"Total filas: {len(df_citas)}")
+            st.dataframe(df_citas[cols_show_citas].reset_index(drop=True))
+
+# =======================================================================
+# 7. SECCIÓN 3 – RESULTADO FINAL
+# =======================================================================
 st.markdown("---")
 st.header("📊 Resultado final")
 
 if not df_total_explota.empty and not df_citas.empty:
     if st.button("⚙️ Generar resultado final", key="btn_generar"):
-        st.session_state.generate_pressed = True
 
-        with st.spinner("Generando..."):
-            # --- intersección por DOC_PACIENTE ---
-            docs_inter = set(df_total_explota["DOC_PACIENTE"].dropna()) & \
-                         set(df_citas["DOC_PACIENTE"].dropna())
+        # --- 7.1 Filtrar grupos con Medicina General & Obstetra ---
+        req_serv = {"MEDICINA GENERAL", "OBSTETRA"}
+        tmp_cit = df_citas.copy()
+        tmp_cit["SERVICIO_UP"] = tmp_cit["SERVICIO"].str.upper()
+        grupos_ok = (
+            tmp_cit.groupby(["DOC_PACIENTE", "PACIENTE", "FECHA_CITA"])["SERVICIO_UP"]
+            .apply(lambda s: req_serv.issubset(set(s))).reset_index(name="flag")
+        )
+        grupos_ok = grupos_ok[grupos_ok["flag"]].drop(columns="flag")
 
-            df_expl = df_total_explota[df_total_explota["DOC_PACIENTE"].isin(docs_inter)]
-            df_cit  = df_citas[df_citas["DOC_PACIENTE"].isin(docs_inter)]
+        # --- 7.2 Seleccionar registros de citas / explota ---
+        df_cit_sel = df_citas.merge(
+            grupos_ok, on=["DOC_PACIENTE", "PACIENTE", "FECHA_CITA"], how="inner"
+        )
+        df_cit_sel["DOC_PACIENTE_citas"] = df_cit_sel["DOC_PACIENTE"]
+        df_cit_sel["FECHA_SOLIC_citas"]  = df_cit_sel["FECHA_SOLIC"]
+        df_cit_sel["FECHA_CITA_citas"]   = df_cit_sel["FECHA_CITA"]
 
-            # --- formatear columnas homogéneas (Explota vs Citas) ---
-            expl_cols_base = [
-                "CENTRO","PERIODO","SERVICIO","ACTIVIDAD","SUBACTIVIDAD",
-                "FECHA_SOLIC","FECHA_CITA","DOC_PACIENTE","PACIENTE","PROFESIONAL"
-            ]
-            cit_cols_extra = [
-                "CODACTIVIDAD","ESTADO_CITA","TIPO_CITA","H_C","DNI_MEDICO",
-                "EDAD","TEL_MOVIL","TURNO","TIP_PROGRAMACION"
-            ]
+        df_expl_sel = df_total_explota.merge(
+            grupos_ok[["DOC_PACIENTE", "PACIENTE", "FECHA_CITA"]],
+            on=["DOC_PACIENTE", "PACIENTE"], how="inner"
+        )
 
-            df_expl_fmt = df_expl[expl_cols_base].copy()
-            for c in cit_cols_extra:
-                df_expl_fmt[c] = ""
+        alt_cols = [c for c in df_expl_sel.columns if c.startswith("FECHA_CITA")]
+        if "FECHA_CITA" not in df_expl_sel.columns and alt_cols:
+            df_expl_sel["FECHA_CITA"] = df_expl_sel[alt_cols[0]]
 
-            df_cit_fmt = df_cit[expl_cols_base + cit_cols_extra].copy()
+        # --- 7.3 Columnas *_match ---
+        df_expl_sel["FECHA_SOLIC_match"] = df_expl_sel["FECHA_SOLIC"]
+        df_expl_sel["FECHA_CITA_match"]  = df_expl_sel["FECHA_CITA"]
 
-            df_union = pd.concat([df_expl_fmt, df_cit_fmt], ignore_index=True).drop_duplicates(
-                subset=["DOC_PACIENTE","PACIENTE","FECHA_CITA","SERVICIO","CODACTIVIDAD"]
-            )
+        # --- 7.4 Enriquecer y renombrar ---
+        df_expl_sel["MES_match"] = df_expl_sel["FECHA_ATENCION"].apply(mes_es)
+        df_cit_sel ["MES_citas"] = df_cit_sel ["FECHA_CITA"].apply(mes_es)
 
-            # --- pac-fecha con OBSTETRA y MEDICINA GENERAL ---
-            req = {"OBSTETRA","MEDICINA GENERAL"}
-            claves_ok = (
-                df_union.groupby(["DOC_PACIENTE","PACIENTE","FECHA_CITA"])["SERVICIO"]
-                .apply(lambda s: set(s.str.upper()))
-                .reset_index()
-            )
-            claves_ok = claves_ok[claves_ok["SERVICIO"].apply(lambda s: req.issubset(s))]
+        df_expl_sel = df_expl_sel.rename(columns={
+            "SERVICIO": "SERVICIO_match",
+            "DOC_PROFESIONAL": "DNI_MEDICO_match",
+            "PROFESIONAL": "PROFESIONAL_match",
+        })
+        df_cit_sel = df_cit_sel.rename(columns={
+            "SERVICIO": "SERVICIO_citas",
+            "DOC_PROFESIONAL": "DNI_MEDICO_citas",
+            "PROFESIONAL": "PROFESIONAL CITA",
+        })
 
-            df_res = df_union.merge(claves_ok[["DOC_PACIENTE","PACIENTE","FECHA_CITA"]],
-                                    on=["DOC_PACIENTE","PACIENTE","FECHA_CITA"],
-                                    how="inner")
+        # --- 7.5 Llaves de servicio ----------
+        df_expl_sel["SERVICIO_KEY"] = df_expl_sel["SERVICIO_match"].str.upper()
+        df_cit_sel ["SERVICIO_KEY"] = df_cit_sel ["SERVICIO_citas"].str.upper()
 
-            # --- MES ---
-            df_res["MES"] = df_res["FECHA_CITA"].apply(mes_es)
+        # Mantener solo una cita por combinación paciente-fecha-servicio
+        df_cit_sel["_idx"] = df_cit_sel.groupby(
+            ["DOC_PACIENTE", "PACIENTE", "FECHA_CITA", "SERVICIO_KEY"]
+        ).cumcount()
+        df_cit_first = df_cit_sel[df_cit_sel["_idx"] == 0].drop(columns="_idx")
 
-            # --- quitar duplicados manteniendo fila con más info ---
-            df_res["_info"] = df_res.apply(non_empty_count, axis=1)
-            df_res = (
-                df_res.sort_values(
-                    by=["DOC_PACIENTE","PACIENTE","FECHA_CITA","SERVICIO","_info"],
-                    ascending=[True, True, True, True, False]
-                )
-                .drop_duplicates(subset=["DOC_PACIENTE","PACIENTE","FECHA_CITA","SERVICIO"], keep="first")
-                .drop(columns="_info")
-            )
+        # --- 7.6 Merge Explota ⇄ Cita principal ---
+        merged = df_expl_sel.merge(
+            df_cit_first,
+            on=["DOC_PACIENTE", "PACIENTE", "FECHA_CITA", "SERVICIO_KEY"],
+            how="left", suffixes=("", "_y")
+        )
+        merged["FECHA_SOLIC"] = merged["FECHA_SOLIC_citas"]
+        merged["FECHA_CITA"]  = merged["FECHA_CITA_citas"]
 
-            # --- seleccionar columnas finales y ordenar ---
-            df_res = df_res.reindex(columns=cabeceras_finales).sort_values(
-                ["DOC_PACIENTE","FECHA_CITA","SERVICIO"]
-            ).reset_index(drop=True)
-            df_res["CENTRO"] = df_res["CENTRO"].apply(aplicar_centro_map_contains)
-            st.session_state.df_result = df_res
+        # --- 7.7 Citas remanentes (“rojas”) ---
+        used_keys = merged[["DOC_PACIENTE", "PACIENTE", "FECHA_CITA", "SERVICIO_KEY"]]
+        df_cit_rest = df_cit_sel.merge(
+            used_keys.drop_duplicates(),
+            on=["DOC_PACIENTE", "PACIENTE", "FECHA_CITA", "SERVICIO_KEY"],
+            how="left", indicator=True
+        )
+        df_cit_rest = df_cit_rest[df_cit_rest["_merge"] == "left_only"].drop(columns=["_merge"])
 
-    # -------- mostrar y descargar --------
-    if st.session_state.generate_pressed and "df_result" in st.session_state:
+        rojo_cols = [
+            "CENTRO", "PERIODO", "DOC_PACIENTE", "PACIENTE", "EDAD", "TEL_MOVIL",
+            "SERVICIO_match", "ACTIVIDAD", "SUBACTIVIDAD", "MES_match",
+            "FECHA_ATENCION", "DNI_MEDICO_match", "PROFESIONAL_match",
+            "FECHA_SOLIC_match", "FECHA_CITA_match"
+        ]
+        for c in rojo_cols:
+            df_cit_rest[c] = ""
+
+        # --- 7.8 Concatenar y ordenar preliminar ---
+        merged["orden"] = 0
+        df_cit_rest["orden"] = 1
+        df_res = (
+            pd.concat([merged, df_cit_rest], ignore_index=True)
+              .sort_values(by=["DOC_PACIENTE", "FECHA_CITA_citas", "orden"])
+              .fillna("")
+        )
+
+        # --- 7.9 Eliminar duplicados con datos llenos ---
+        subset_dup_cols = [
+            "CENTRO", "PERIODO", "DOC_PACIENTE", "PACIENTE", "EDAD", "TEL_MOVIL",
+            "SERVICIO_match", "ACTIVIDAD", "SUBACTIVIDAD", "MES_match",
+            "FECHA_ATENCION", "DNI_MEDICO_match", "PROFESIONAL_match"
+        ]
+        mask_no_blank = df_res[subset_dup_cols].replace('', pd.NA).notna().all(axis=1)
+        dup_mask = df_res.duplicated(subset=subset_dup_cols, keep='first') & mask_no_blank
+        df_res = df_res[~dup_mask].reset_index(drop=True)
+
+        # --- 7.10 NUEVO: crear columna unificada DOCUMENTO_PACIENTE ---
+        df_res["DOCUMENTO_PACIENTE"] = df_res["DOC_PACIENTE"].where(
+            df_res["DOC_PACIENTE"] != "", df_res["DOC_PACIENTE_citas"]
+        )
+
+        # --- 7.11 Orden de columnas final (unificada primero) ---
+        cols_final = [
+            "DOCUMENTO_PACIENTE",    
+            "PACIENTE",
+            "CENTRO", "PERIODO",
+             "EDAD", "TEL_MOVIL", 
+            "SERVICIO_match", "ACTIVIDAD", "SUBACTIVIDAD",
+            "MES_match", "FECHA_ATENCION",
+            "FECHA_SOLIC_match", "FECHA_CITA_match",
+            "DNI_MEDICO_match", "PROFESIONAL_match",
+            "TURNO",
+            "SERVICIO_citas",
+            "FECHA_SOLIC_citas", "MES_citas", "FECHA_CITA_citas",
+            "ESTADO_CITA", "TIPO_CITA", "H_C", "DNI_MEDICO_citas",
+            "PROFESIONAL CITA", "OBSERVACION"
+        ]
+        df_res = df_res.reindex(columns=cols_final)
+
+        # --- 7.12 Filtrar DOCUMENTO_PACIENTE presente en ambos datasets ---
+        docs_explota = set(df_total_explota["DOC_PACIENTE"].unique())
+        docs_citas   = set(df_citas["DOC_PACIENTE"].unique())
+        docs_intersect = docs_explota & docs_citas
+        df_res = df_res[df_res["DOCUMENTO_PACIENTE"].isin(docs_intersect)]
+
+        # --- 7.13 Descargas + previsualización ---
         st.success("Resultado final listo ✅")
-        st.write(f"Total filas: {len(st.session_state.df_result)}")
-        st.dataframe(st.session_state.df_result)
 
         col_txt, col_xlsx = st.columns(2)
-
         with col_txt:
-            txt_data = st.session_state.df_result.to_csv(sep="|", index=False, lineterminator="\n")
-            st.download_button("📥 Descargar TXT",
-                               txt_data.encode("utf-8"),
-                               file_name=nombre_archivo("resultado_final", "txt"),
-                               mime="text/plain")
-
+            txt_final = df_res.to_csv(
+                sep="|", index=False, lineterminator="\n"
+            ).encode("utf-8")
+            st.download_button(
+                "⬇️ Haz click para bajar TXT",
+                txt_final,
+                file_name=nombre_archivo("resultado_final", "txt"),
+                mime="text/plain",
+                key="final_txt_dl"
+            )
         with col_xlsx:
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                st.session_state.df_result.to_excel(writer, index=False, sheet_name="ResultadoFinal")
-            st.download_button("📥 Descargar Excel",
-                               buf.getvalue(),
-                               file_name=nombre_archivo("resultado_final", "xlsx"),
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                df_res.to_excel(writer, index=False, sheet_name="ResultadoFinal")
+            st.download_button(
+                "⬇️ Haz click para bajar Excel",
+                buf.getvalue(),
+                file_name=nombre_archivo("resultado_final", "xlsx"),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="final_xlsx_dl"
+            )
+
+        # Previsualización
+        st.write(f"Total filas: {len(df_res)}")
+        st.dataframe(df_res.reset_index(drop=True))
+
 else:
-    st.info("Carga Explota Match (GESTANTE) y Citas Médicas para generar el resultado final.")
+    st.info("Carga Explota Match y Citas Médicas para generar el resultado final.")
